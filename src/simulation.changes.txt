@@ -1,0 +1,32 @@
+// Add this import at the top with other imports
+import { EmitterManager } from './emitterManager';
+
+// Add this field with other private fields
+private _emitterManager: EmitterManager;
+
+// Add this initialization in the constructor after this.resizeCanvas();
+this._emitterManager = new EmitterManager();
+
+// Add these methods to the class
+public addEmitter(emitterConfig: any) {
+    return this._emitterManager.addEmitter(emitterConfig);
+}
+
+public removeEmitter(index: number) {
+    this._emitterManager.removeEmitter(index);
+}
+
+public getEmitter(index: number) {
+    return this._emitterManager.getEmitter(index);
+}
+
+public updateEmitter(index: number, config: any) {
+    this._emitterManager.updateEmitter(index, config);
+}
+
+public get emitters() {
+    return this._emitterManager.emitters;
+}
+
+// In the step method, add this line after this.gl.viewport(0, 0, this._velocity.width, this._velocity.height);
+this._emitterManager.processEmitters((x, y, dx, dy, color) => this.splat(x, y, dx, dy, color));

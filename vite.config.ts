@@ -1,21 +1,18 @@
 import { defineConfig } from 'vite';
 import dts from 'vite-plugin-dts';
 
-const config = defineConfig({
+export default defineConfig({
   build: {
     lib: {
-      entry: './src/index.ts',
+      entry: './src/main.ts',
       name: 'WebGLFluidEnhanced',
       fileName: (format) => `index.${format}.js`,
     },
+    sourcemap: true,
   },
-  resolve: {
-    alias: {
-      'webgl-fluid-enhanced': './src/index.ts',
-    },
+  server: {
+    host: true,
+    open: true,
   },
-
   plugins: [dts({ rollupTypes: true })],
 });
-
-export default config;

@@ -93,7 +93,6 @@ webGLFluidEnhanced.config({
   SUNRAYS_RESOLUTION: 196, // Resolution of the sunrays effect
   SUNRAYS_WEIGHT: 1.0, // Weight of the sunrays effect
 });
-```
 
 ### General info
 

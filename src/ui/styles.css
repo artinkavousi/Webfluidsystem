@@ -1,0 +1,139 @@
+.control-panel {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 15px;
+    border-radius: 8px;
+    font-family: Arial, sans-serif;
+    min-width: 250px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
+}
+
+.control-panel:hover {
+    transform: translateY(-2px);
+}
+
+.main-panel {
+    top: 20px;
+    left: 20px;
+}
+
+.emitter-panel {
+    top: 20px;
+    right: 20px;
+}
+
+.rendering-panel {
+    bottom: 20px;
+    left: 20px;
+}
+
+.audio-panel {
+    bottom: 20px;
+    right: 20px;
+}
+
+h2 {
+    margin: 0 0 15px 0;
+    font-size: 18px;
+    font-weight: 500;
+    color: #fff;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    padding-bottom: 8px;
+}
+
+.control-group {
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+label {
+    flex: 1;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+input[type="range"] {
+    flex: 2;
+    height: 6px;
+    -webkit-appearance: none;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+    background: #f0f0f0;
+}
+
+input[type="color"] {
+    width: 40px;
+    height: 24px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+select {
+    flex: 2;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+}
+
+select:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+button {
+    width: 100%;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    transition: background 0.2s;
+    margin-top: 10px;
+}
+
+button:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.value {
+    min-width: 40px;
+    text-align: right;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .control-panel {
+        position: relative;
+        margin: 10px;
+        width: calc(100% - 40px);
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+    }
+}

@@ -6,6 +6,7 @@ import { Programs } from './programs';
 import { Screenshot } from './screenshot';
 import { Shaders } from './shaders';
 import { Texture } from './texture';
+import { EmitterManager } from './emitterManager';
 import type {
   DoubleFBO,
   ExtraContext,
@@ -66,6 +67,7 @@ class Simulation {
   private _sunrays!: FBO;
   private _sunraysTemp!: FBO;
   private animationFrameId!: number;
+  private _emitterManager: EmitterManager;
 
   constructor(container: HTMLElement) {
     let canvas = container.querySelector('canvas');
@@ -77,6 +79,8 @@ class Simulation {
     this.canvas.style.width = '100%';
     this.canvas.style.height = '100%';
     this.resizeCanvas();
+
+    this._emitterManager = new EmitterManager();
 
     this.inverted = defaultConfig.inverted;
 
@@ -875,6 +879,9 @@ class Simulation {
 
   private step(dt: number) {
     this.gl.disable(this.gl.BLEND);
+    this.gl.viewport(0, 0, this._velocity.width, this._velocity.height);
+
+    this._emitterManager.processEmitters((x, y, dx, dy, color) => this.splat(x, y, dx, dy, color));
 
     this.programs.curlProgram.bind();
     this.gl.uniform2f(
@@ -1265,6 +1272,26 @@ class Simulation {
   public set inverted(value: boolean) {
     this._inverted = value;
     this.canvas.style.filter = value ? 'invert(1)' : 'none';
+  }
+
+  public addEmitter(emitterConfig: any) {
+    return this._emitterManager.addEmitter(emitterConfig);
+  }
+
+  public removeEmitter(index: number) {
+    this._emitterManager.removeEmitter(index);
+  }
+
+  public getEmitter(index: number) {
+    return this._emitterManager.getEmitter(index);
+  }
+
+  public updateEmitter(index: number, config: any) {
+    this._emitterManager.updateEmitter(index, config);
+  }
+
+  public get emitters() {
+    return this._emitterManager.emitters;
   }
 }
 
