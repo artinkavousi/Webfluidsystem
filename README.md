@@ -323,4 +323,3 @@ export class AppComponent implements OnInit {
 </script>
 
 <canvas bind:this={canvasRef} style="width: 100vw; height: 100vh;" />
-```
