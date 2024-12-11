@@ -1,6 +1,6 @@
 {
   "name": "webgl-fluid-enhanced",
-  "version": "0.8.0",
+  "version": "1.3.0",
   "description": "WebGL Fluid Simulation for modern webpages (works even on mobile)",
   "keywords": [
     "webgl",

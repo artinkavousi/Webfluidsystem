@@ -22,8 +22,8 @@ export class EmitterManager {
         this._lastUpdate = Date.now();
         
         // Start audio immediately
-        this._audioManager.enableAudio().catch(error => {
-            console.warn('Failed to enable audio in EmitterManager:', error);
+        this._audioManager.enableAudio().catch(() => {
+            // Silently handle error
         });
 
         // Start update loop
@@ -47,61 +47,37 @@ export class EmitterManager {
     }
 
     private processEmitterEffect(emitter: any): void {
+        // Get audio data if available
         const audioData = this._audioManager.getAudioData();
-        if (!audioData) {
-            console.log('No audio data available');
-            return;
+        let finalForce = emitter.force || 1000;
+        let finalRadius = emitter.radius || 1;
+
+        // Apply audio effects if available
+        if (audioData) {
+            if (this._audioConfig.affectsForce) {
+                const forceRange = this._audioConfig.maxForce - this._audioConfig.minForce;
+                const normalizedAmplitude = Math.min(Math.max(audioData.amplitude, 0), 1);
+                finalForce += forceRange * normalizedAmplitude;
+            }
+
+            if (this._audioConfig.affectsRadius) {
+                const radiusRange = this._audioConfig.maxRadius - this._audioConfig.minRadius;
+                const normalizedAmplitude = Math.min(Math.max(audioData.amplitude, 0), 1);
+                finalRadius += radiusRange * normalizedAmplitude;
+            }
         }
 
-        let force = emitter.force;
-        let radius = emitter.radius || 1;
-
-        // Apply audio effects to force if enabled
-        if (this._audioConfig.affectsForce) {
-            const forceRange = this._audioConfig.maxForce - this._audioConfig.minForce;
-            const normalizedAmplitude = Math.min(Math.max(audioData.amplitude, 0), 1);
-            
-            // Add some exponential scaling for more dramatic effect
-            const scaledAmplitude = Math.pow(normalizedAmplitude * this._audioConfig.intensity, 1.5);
-            force = this._audioConfig.minForce + (forceRange * scaledAmplitude);
-            
-            console.log('Audio force effect:', {
-                baseForce: emitter.force,
-                audioAmplitude: audioData.amplitude,
-                scaledAmplitude,
-                calculatedForce: force,
-                min: this._audioConfig.minForce,
-                max: this._audioConfig.maxForce
-            });
-        }
-
-        // Apply audio effects to radius if enabled
-        if (this._audioConfig.affectsRadius) {
-            const radiusRange = this._audioConfig.maxRadius - this._audioConfig.minRadius;
-            const normalizedAmplitude = Math.min(Math.max(audioData.amplitude, 0), 1);
-            
-            // Add some exponential scaling for more dramatic effect
-            const scaledAmplitude = Math.pow(normalizedAmplitude * this._audioConfig.intensity, 1.5);
-            radius = this._audioConfig.minRadius + (radiusRange * scaledAmplitude);
-            
-            console.log('Audio radius effect:', {
-                baseRadius: emitter.radius,
-                audioAmplitude: audioData.amplitude,
-                scaledAmplitude,
-                calculatedRadius: radius,
-                min: this._audioConfig.minRadius,
-                max: this._audioConfig.maxRadius
-            });
-        }
-
-        // Apply the effect with calculated values
+        // Apply the effect
         if (emitter.active) {
-            this._simulation.applyForce(
+            const dx = emitter.direction[0] * finalForce;
+            const dy = emitter.direction[1] * finalForce;
+            
+            this._simulation.splat(
                 emitter.position[0],
                 emitter.position[1],
-                emitter.direction[0] * force,
-                emitter.direction[1] * force,
-                radius
+                dx,
+                dy,
+                { r: 0.5, g: 0.5, b: 1.0 }
             );
         }
     }
@@ -111,7 +87,6 @@ export class EmitterManager {
             ...this._audioConfig,
             ...config
         };
-        console.log('Updated audio config:', this._audioConfig);
     }
 
     public addEmitter(emitterConfig: any) {
@@ -143,7 +118,7 @@ export class EmitterManager {
         try {
             await this._audioManager.enableAudio();
         } catch (error) {
-            console.error('Failed to enable audio reactivity:', error);
+            // Silently handle error
         }
     }
 
@@ -159,19 +134,59 @@ export class EmitterManager {
     public processEmitters(splatCallback: (x: number, y: number, dx: number, dy: number, color: { r: number; g: number; b: number }) => void) {
         this._emitters.forEach(emitter => {
             if (emitter.active) {
-                const { position, direction, force, color, size } = emitter;
-                // Scale force by size but keep it very gentle
-                const scaledForce = force * size * 0.05; 
-                const dx = direction[0] * scaledForce;
-                const dy = direction[1] * scaledForce;
-                // Convert array color to object format with minimal intensity
+                const position = emitter.position || [0, 0];
+                const direction = emitter.direction || [0, 0];
+                const force = emitter.force || 1000;
+                const color = emitter.color || [30, 0, 300];
+
+                // Scale force but keep it gentle
+                const dx = direction[0] * force;
+                const dy = direction[1] * force;
+                
+                // Convert array color to object format
                 const colorObj = {
-                    r: color[0] * 0.1, 
-                    g: color[1] * 0.1,
-                    b: color[2] * 0.1
+                    r: Math.min(255, Math.max(0, color[0])) / 255,
+                    g: Math.min(255, Math.max(0, color[1])) / 255,
+                    b: Math.min(255, Math.max(0, color[2])) / 255
                 };
+
                 splatCallback(position[0], position[1], dx, dy, colorObj);
             }
         });
+    }
+
+    public addMouseEmitter(x: number, y: number, force: number = 1000, radius: number = 1): number {
+        const emitterConfig = {
+            active: true,
+            position: [x, y],
+            direction: [0, 0],
+            force: force * 0.1,
+            radius: radius,
+            type: 'mouse',
+            color: [30, 0, 300]
+        };
+        return this.addEmitter(emitterConfig);
+    }
+
+    public updateMouseEmitter(index: number, x: number, y: number, dx: number, dy: number): void {
+        const emitter = this._emitters[index];
+        if (emitter && emitter.type === 'mouse') {
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const scale = 0.1;
+            emitter.position = [x, y];
+            if (length > 0) {
+                emitter.direction = [dx / length * scale, dy / length * scale];
+            } else {
+                emitter.direction = [0, 0];
+            }
+            emitter.active = true;
+        }
+    }
+
+    public deactivateMouseEmitter(index: number): void {
+        const emitter = this._emitters[index];
+        if (emitter && emitter.type === 'mouse') {
+            emitter.active = false;
+        }
     }
 }

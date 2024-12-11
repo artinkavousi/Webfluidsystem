@@ -98,11 +98,8 @@ class Simulation {
     }
 
     const shaders = new Shaders(this.gl, this.ext);
-
     this.blitInit();
-
     this.ditheringTexture = Texture.ditheringTexture(this.gl);
-
     this.programs = new Programs(this.gl, shaders);
 
     this.displayMaterial = new Material(
@@ -114,8 +111,16 @@ class Simulation {
     // Initialize EmitterManager with this simulation instance
     this._emitterManager = new EmitterManager(this);
 
-    this.inverted = defaultConfig.inverted;
+    // Bind event listeners
+    canvas.addEventListener('mousedown', this.handleMouseDown);
+    canvas.addEventListener('mousemove', this.handleMouseMove);
+    window.addEventListener('mouseup', this.handleMouseUp);
 
+    canvas.addEventListener('touchstart', this.handleTouchStart);
+    canvas.addEventListener('touchmove', this.handleTouchMove);
+    window.addEventListener('touchend', this.handleTouchEnd);
+
+    this.inverted = defaultConfig.inverted;
     this.update = this.update.bind(this);
   }
 
@@ -133,20 +138,6 @@ class Simulation {
 
     // Ensure canvas is properly sized
     this.resize();
-
-    // Add event listeners
-    this.canvas.addEventListener('mousedown', this.handleMouseDown);
-    this.canvas.addEventListener('mousemove', this.handleMouseMove);
-    window.addEventListener('mouseup', this.handleMouseUp);
-    this.canvas.addEventListener('touchstart', this.handleTouchStart, {
-      passive: false,
-      capture: true,
-    });
-    this.canvas.addEventListener('touchmove', this.handleTouchMove, {
-      passive: false,
-      capture: true,
-    });
-    window.addEventListener('touchend', this.handleTouchEnd);
 
     // Start the animation loop
     this.update();
@@ -195,7 +186,14 @@ class Simulation {
       this.colorPalette,
       this.brightness,
     );
-    console.log('Mouse down:', { posX, posY });
+
+    // Add mouse emitter
+    pointer.emitterId = this._emitterManager.addMouseEmitter(
+      posX / this.canvas.width,
+      posY / this.canvas.height,
+      this.splatForce,
+      this.splatRadius
+    );
   };
 
   private handleMouseMove = (event: MouseEvent) => {
@@ -211,6 +209,19 @@ class Simulation {
     }
     
     pointer.updatePointerMoveData(posX, posY, this.canvas, this.hover);
+
+    // Update mouse emitter if it exists
+    if (pointer.emitterId !== undefined) {
+      const dx = posX - pointer.prevX;
+      const dy = posY - pointer.prevY;
+      this._emitterManager.updateMouseEmitter(
+        pointer.emitterId,
+        posX / this.canvas.width,
+        posY / this.canvas.height,
+        dx / this.canvas.width,
+        dy / this.canvas.height
+      );
+    }
   };
 
   private handleMouseUp = (event: MouseEvent) => {
@@ -218,6 +229,11 @@ class Simulation {
     const pointer = this.pointers.find((p) => p.id === -1);
     if (pointer) {
       pointer.updatePointerUpData();
+      // Deactivate mouse emitter
+      if (pointer.emitterId !== undefined) {
+        this._emitterManager.deactivateMouseEmitter(pointer.emitterId);
+        pointer.emitterId = undefined;
+      }
     }
   };
 
@@ -865,11 +881,18 @@ class Simulation {
 
   private update() {
     const dt = this.calcDeltaTime();
-    if (dt > 0) {
+    if (dt > 0 && !this.paused) {
+      this.applyInputs();
+      
+      // Process emitters before step
+      this._emitterManager.processEmitters((x, y, dx, dy, color) => {
+        this.splat(x, y, dx, dy, color);
+      });
+      
       this.step(dt);
-      // Update emitters with the current time step
-      this._emitterManager.update(dt);
+      this.updateColors(dt);
     }
+    
     this.render(null);
     requestAnimationFrame(this.update);
   }
@@ -922,8 +945,6 @@ class Simulation {
   private step(dt: number) {
     this.gl.disable(this.gl.BLEND);
     this.gl.viewport(0, 0, this._velocity.width, this._velocity.height);
-
-    this._emitterManager.processEmitters((x, y, dx, dy, color) => this.splat(x, y, dx, dy, color));
 
     this.programs.curlProgram.bind();
     this.gl.uniform2f(

@@ -11,6 +11,7 @@ class Pointer {
   public down = false;
   public moved = false;
   public color;
+  public emitterId?: number;
 
   constructor(colorPalette: string[], brightness: number) {
     this.color = Color.generateColor(colorPalette, brightness);
