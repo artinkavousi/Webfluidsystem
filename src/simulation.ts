@@ -78,15 +78,14 @@ class Simulation {
     this.canvas = canvas;
     this.canvas.style.width = '100%';
     this.canvas.style.height = '100%';
-    this.resizeCanvas();
 
-    this._emitterManager = new EmitterManager();
-
-    this.inverted = defaultConfig.inverted;
-
+    // Initialize WebGL context
     const { gl, ext } = this.getWebGLContext();
     this.gl = gl;
     this.ext = ext;
+
+    // Initial resize
+    this.resize();
 
     if (this.isMobile()) {
       this.dyeResolution /= 2;
@@ -112,17 +111,30 @@ class Simulation {
       this.gl,
     );
 
+    // Initialize EmitterManager with this simulation instance
+    this._emitterManager = new EmitterManager(this);
+
+    this.inverted = defaultConfig.inverted;
+
     this.update = this.update.bind(this);
   }
 
   public start() {
-    this.pointers.push(new Pointer(this.colorPalette, this.brightness));
+    if (this.hasStarted) {
+      console.log('Simulation already started');
+      return;
+    }
+
+    console.log('Starting simulation...');
+    this.pointers = [new Pointer(this.colorPalette, this.brightness)];
 
     this.updateKeywords();
     this.initFramebuffers();
 
-    this.update();
+    // Ensure canvas is properly sized
+    this.resize();
 
+    // Add event listeners
     this.canvas.addEventListener('mousedown', this.handleMouseDown);
     this.canvas.addEventListener('mousemove', this.handleMouseMove);
     window.addEventListener('mouseup', this.handleMouseUp);
@@ -136,7 +148,16 @@ class Simulation {
     });
     window.addEventListener('touchend', this.handleTouchEnd);
 
+    // Start the animation loop
+    this.update();
+
+    // Create some initial splats
+    setTimeout(() => {
+      this.multipleSplats(parseInt((Math.random() * 20).toString()) + 5);
+    }, 100);
+
     this.hasStarted = true;
+    console.log('Simulation started successfully');
   }
 
   public stop() {
@@ -155,12 +176,17 @@ class Simulation {
   }
 
   private handleMouseDown = (event: MouseEvent) => {
-    const posX = this.scaleByPixelRatio(event.offsetX);
-    const posY = this.scaleByPixelRatio(event.offsetY);
-    let pointer = this.pointers.find((p) => p.id == -1);
+    event.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const posX = this.scaleByPixelRatio(event.clientX - rect.left);
+    const posY = this.scaleByPixelRatio(event.clientY - rect.top);
+    
+    let pointer = this.pointers.find((p) => p.id === -1);
     if (!pointer) {
       pointer = new Pointer(this.colorPalette, this.brightness);
+      this.pointers.push(pointer);
     }
+    
     pointer.updatePointerDownData(
       -1,
       posX,
@@ -169,21 +195,29 @@ class Simulation {
       this.colorPalette,
       this.brightness,
     );
+    console.log('Mouse down:', { posX, posY });
   };
 
   private handleMouseMove = (event: MouseEvent) => {
-    const posX = this.scaleByPixelRatio(event.offsetX);
-    const posY = this.scaleByPixelRatio(event.offsetY);
-    let pointer = this.pointers.find((p) => p.id == -1);
+    event.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const posX = this.scaleByPixelRatio(event.clientX - rect.left);
+    const posY = this.scaleByPixelRatio(event.clientY - rect.top);
+    
+    let pointer = this.pointers.find((p) => p.id === -1);
     if (!pointer) {
       pointer = new Pointer(this.colorPalette, this.brightness);
+      this.pointers.push(pointer);
     }
+    
     pointer.updatePointerMoveData(posX, posY, this.canvas, this.hover);
   };
 
-  private handleMouseUp = () => {
-    if (!this.hover) {
-      this.pointers[0]!.updatePointerUpData();
+  private handleMouseUp = (event: MouseEvent) => {
+    event.preventDefault();
+    const pointer = this.pointers.find((p) => p.id === -1);
+    if (pointer) {
+      pointer.updatePointerUpData();
     }
   };
 
@@ -231,15 +265,23 @@ class Simulation {
     return Math.floor(input * pixelRatio);
   }
 
-  private resizeCanvas(): boolean {
-    const width = this.scaleByPixelRatio(this.canvas.clientWidth);
-    const height = this.scaleByPixelRatio(this.canvas.clientHeight);
-    if (this.canvas.width != width || this.canvas.height != height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-      return true;
+  public resize(): void {
+    if (!this.gl) {
+      console.warn('Cannot resize: WebGL context not initialized');
+      return;
     }
-    return false;
+
+    const dpr = window.devicePixelRatio || 1;
+    const width = this.gl.canvas.clientWidth * dpr;
+    const height = this.gl.canvas.clientHeight * dpr;
+
+    if (this.gl.canvas.width !== width || this.gl.canvas.height !== height) {
+      this.gl.canvas.width = width;
+      this.gl.canvas.height = height;
+      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+    }
+
+    console.log('Simulation resized:', { width, height, dpr });
   }
 
   private supportRenderTextureFormat(
@@ -808,6 +850,11 @@ class Simulation {
     this._dye.swap();
   }
 
+  public applyForce(x: number, y: number, dx: number, dy: number, radius: number = 1) {
+    const splatRadius = this.correctRadius(radius);
+    this.splat(x, y, dx, dy, { r: 0, g: 0, b: 0 });
+  }
+
   private correctRadius(radius: number): number {
     const aspectRatio = this.canvas.width / this.canvas.height;
     if (aspectRatio > 1) {
@@ -818,18 +865,13 @@ class Simulation {
 
   private update() {
     const dt = this.calcDeltaTime();
-    if (this.resizeCanvas()) this.initFramebuffers();
-
-    this.updateColors(dt);
-    this.applyInputs();
-
-    if (!this.paused) this.step(dt);
-
+    if (dt > 0) {
+      this.step(dt);
+      // Update emitters with the current time step
+      this._emitterManager.update(dt);
+    }
     this.render(null);
-
-    // This is bound in the constructor, so it's safe to call here
-    // eslint-disable-next-line
-    this.animationFrameId = requestAnimationFrame(this.update);
+    requestAnimationFrame(this.update);
   }
 
   private calcDeltaTime(): number {
@@ -1292,6 +1334,14 @@ class Simulation {
 
   public get emitters() {
     return this._emitterManager.emitters;
+  }
+
+  public setAudioConfig(config: any): void {
+    if (!this._emitterManager) {
+      console.error('EmitterManager not initialized');
+      return;
+    }
+    this._emitterManager.setAudioConfig(config);
   }
 }
 

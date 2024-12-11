@@ -142,8 +142,153 @@ export class UIManager {
         this._container.appendChild(emitterPanel);
         this._panels.set('emitter', emitterPanel);
 
+        this.createAudioControls(emitterPanel);
+
         // Setup event listeners after panels are created
         this.setupEventListeners();
+    }
+
+    private createAudioControls(emitterPanel: HTMLElement): void {
+        const audioControls = document.createElement('div');
+        audioControls.className = 'audio-controls';
+        audioControls.innerHTML = `
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" class="audio-reactive" checked>
+                    Audio Reactive
+                </label>
+            </div>
+            <div class="control-group">
+                <label>Frequency Range</label>
+                <select class="frequency-range">
+                    <option value="low">Low</option>
+                    <option value="mid">Mid</option>
+                    <option value="high" selected>High</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Intensity Multiplier</label>
+                <input type="range" class="intensity-multiplier" min="0" max="5" step="0.1" value="2">
+                <span class="value">2</span>
+            </div>
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" class="affects-force" checked>
+                    Affects Force
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" class="affects-radius" checked>
+                    Affects Radius
+                </label>
+            </div>
+            <div class="control-group">
+                <label>Min Force</label>
+                <input type="range" class="min-force" min="0" max="100" step="1" value="0">
+                <span class="value">0</span>
+            </div>
+            <div class="control-group">
+                <label>Max Force</label>
+                <input type="range" class="max-force" min="0" max="1000" step="1" value="500">
+                <span class="value">500</span>
+            </div>
+            <div class="control-group">
+                <label>Min Radius</label>
+                <input type="range" class="min-radius" min="0.01" max="1" step="0.01" value="0.01">
+                <span class="value">0.01</span>
+            </div>
+            <div class="control-group">
+                <label>Max Radius</label>
+                <input type="range" class="max-radius" min="0.01" max="2" step="0.01" value="1">
+                <span class="value">1</span>
+            </div>
+        `;
+
+        // Add event listeners for all controls
+        const audioReactiveCheckbox = audioControls.querySelector('.audio-reactive') as HTMLInputElement;
+        const frequencySelect = audioControls.querySelector('.frequency-range') as HTMLSelectElement;
+        const intensitySlider = audioControls.querySelector('.intensity-multiplier') as HTMLInputElement;
+        const affectsForceCheckbox = audioControls.querySelector('.affects-force') as HTMLInputElement;
+        const affectsRadiusCheckbox = audioControls.querySelector('.affects-radius') as HTMLInputElement;
+
+        // Add input event listeners
+        audioControls.querySelectorAll('input[type="range"]').forEach(input => {
+            input.addEventListener('input', () => {
+                this.updateValueDisplay(input as HTMLInputElement);
+                this.updateAudioConfig();
+            });
+        });
+
+        // Add change event listeners for checkboxes and select
+        [audioReactiveCheckbox, affectsForceCheckbox, affectsRadiusCheckbox].forEach(checkbox => {
+            checkbox.addEventListener('change', () => this.updateAudioConfig());
+        });
+        frequencySelect.addEventListener('change', () => this.updateAudioConfig());
+
+        // Add audio toggle handler
+        audioReactiveCheckbox.addEventListener('change', this.handleAudioToggle.bind(this));
+
+        emitterPanel.appendChild(audioControls);
+    }
+
+    private async handleAudioToggle(event: Event): Promise<void> {
+        const checkbox = event.target as HTMLInputElement;
+        const audioControls = checkbox.closest('.audio-controls') as HTMLElement;
+
+        try {
+            if (checkbox.checked) {
+                await this._audioManager.enableAudio();
+                console.log('Audio enabled successfully');
+                audioControls.classList.remove('hidden');
+                this.updateAudioConfig();
+            } else {
+                this._audioManager.disable();
+                console.log('Audio disabled');
+                audioControls.classList.add('hidden');
+            }
+        } catch (error) {
+            console.error('Error toggling audio:', error);
+            checkbox.checked = false;
+            audioControls.classList.add('hidden');
+            alert('Failed to initialize audio. Please ensure microphone permissions are granted and try again.');
+        }
+    }
+
+    private updateAudioConfig(): void {
+        const emitterPanel = this._panels.get('emitter');
+        if (emitterPanel) {
+            const frequencySelect = emitterPanel.querySelector('.frequency-range') as HTMLSelectElement;
+            const intensitySlider = emitterPanel.querySelector('.intensity-multiplier') as HTMLInputElement;
+            const affectsForce = emitterPanel.querySelector('.affects-force') as HTMLInputElement;
+            const affectsRadius = emitterPanel.querySelector('.affects-radius') as HTMLInputElement;
+            const minForceInput = emitterPanel.querySelector('.min-force') as HTMLInputElement;
+            const maxForceInput = emitterPanel.querySelector('.max-force') as HTMLInputElement;
+            const minRadiusInput = emitterPanel.querySelector('.min-radius') as HTMLInputElement;
+            const maxRadiusInput = emitterPanel.querySelector('.max-radius') as HTMLInputElement;
+
+            if (!frequencySelect || !intensitySlider || !affectsForce || !affectsRadius || 
+                !minForceInput || !maxForceInput || !minRadiusInput || !maxRadiusInput) {
+                console.error('Missing audio control elements');
+                return;
+            }
+
+            const audioConfig = {
+                affectsForce: affectsForce.checked,
+                affectsRadius: affectsRadius.checked,
+                minForce: parseFloat(minForceInput.value),
+                maxForce: parseFloat(maxForceInput.value),
+                minRadius: parseFloat(minRadiusInput.value),
+                maxRadius: parseFloat(maxRadiusInput.value)
+            };
+
+            this._simulation.setAudioConfig(audioConfig);
+            console.log('Audio configuration updated:', {
+                frequency: frequencySelect.value,
+                intensity: intensitySlider.value,
+                ...audioConfig
+            });
+        }
     }
 
     private setupEventListeners(): void {

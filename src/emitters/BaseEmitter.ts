@@ -8,6 +8,17 @@ export abstract class BaseEmitter implements IEmitter {
     protected _direction: Vector2;
     protected _color: [number, number, number];
     protected _active: boolean;
+    protected _audioReactive: boolean;
+    protected _audioConfig: {
+        frequencyRange: 'low' | 'mid' | 'high';
+        intensityMultiplier: number;
+        affectsForce: boolean;
+        affectsRadius: boolean;
+        minForce: number;
+        maxForce: number;
+        minRadius: number;
+        maxRadius: number;
+    };
 
     constructor(
         position: Vector2,
@@ -22,11 +33,37 @@ export abstract class BaseEmitter implements IEmitter {
         this._direction = direction;
         this._color = color;
         this._active = false;
+        this._audioReactive = false;
+        this._audioConfig = {
+            frequencyRange: 'mid',
+            intensityMultiplier: 1.0,
+            affectsForce: true,
+            affectsRadius: false,
+            minForce: 10,
+            maxForce: 200,
+            minRadius: 0.05,
+            maxRadius: 0.2
+        };
     }
 
     // IEmitter implementation
-    abstract update(deltaTime: number): void;
+    abstract update(deltaTime: number, audioData?: { frequency: number; amplitude: number }): void;
     abstract render(): void;
+
+    protected updateAudioReactiveProperties(audioData: { frequency: number; amplitude: number }): void {
+        const { amplitude } = audioData;
+        const normalizedAmplitude = amplitude * this._audioConfig.intensityMultiplier;
+
+        if (this._audioConfig.affectsForce) {
+            const forceDelta = this._audioConfig.maxForce - this._audioConfig.minForce;
+            // this.force = this._audioConfig.minForce + (forceDelta * normalizedAmplitude);
+        }
+
+        if (this._audioConfig.affectsRadius) {
+            const radiusDelta = this._audioConfig.maxRadius - this._audioConfig.minRadius;
+            // this.radius = this._audioConfig.minRadius + (radiusDelta * normalizedAmplitude);
+        }
+    }
 
     setPosition(position: Vector2): void {
         this._position = position;
@@ -46,6 +83,14 @@ export abstract class BaseEmitter implements IEmitter {
 
     setEmissionRate(rate: number): void {
         this._emissionRate = rate;
+    }
+
+    setAudioConfig(config: Partial<typeof this._audioConfig>): void {
+        this._audioConfig = { ...this._audioConfig, ...config };
+    }
+
+    toggleAudioReactivity(enabled: boolean): void {
+        this._audioReactive = enabled;
     }
 
     initialize(): void {
