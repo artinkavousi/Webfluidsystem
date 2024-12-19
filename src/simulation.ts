@@ -7,6 +7,10 @@ import { Screenshot } from './screenshot';
 import { Shaders } from './shaders';
 import { Texture } from './texture';
 import { EmitterManager } from './emitterManager';
+import { PerformanceMonitor } from './utils/performance';
+import { ResourceManager } from './utils/resource-manager';
+import { WebGLState } from './utils/webgl-state';
+import { QualityManager } from './utils/quality-manager';
 import type {
   DoubleFBO,
   ExtraContext,
@@ -68,87 +72,234 @@ class Simulation {
   private _sunraysTemp!: FBO;
   private animationFrameId!: number;
   private _emitterManager: EmitterManager;
+  private performanceMonitor: PerformanceMonitor;
+  private resourceManager: ResourceManager;
+  private webglState: WebGLState;
+  private qualityManager: QualityManager;
 
   constructor(container: HTMLElement) {
-    let canvas = container.querySelector('canvas');
-    if (!canvas) {
-      canvas = document.createElement('canvas');
-      container.appendChild(canvas);
+    try {
+      let canvas = container.querySelector('canvas');
+      if (!canvas) {
+        canvas = document.createElement('canvas');
+        container.appendChild(canvas);
+      }
+      this.canvas = canvas;
+      this.canvas.style.width = '100%';
+      this.canvas.style.height = '100%';
+
+      // Initialize WebGL context
+      const { gl, ext } = this.getWebGLContext();
+      if (!gl) {
+        throw new Error('Failed to initialize WebGL context');
+      }
+      this.gl = gl;
+      this.ext = ext;
+
+      // Initialize managers
+      this.performanceMonitor = PerformanceMonitor.getInstance(this.gl);
+      this.resourceManager = ResourceManager.getInstance(this.gl);
+      this.webglState = WebGLState.getInstance(this.gl);
+      this.qualityManager = QualityManager.getInstance();
+
+      // Initial resize
+      this.resize();
+
+      // Initialize base configuration
+      if (this.isMobile()) {
+        this.dyeResolution /= 2;
+      }
+      if (!this.ext.supportLinearFiltering) {
+        this.dyeResolution /= 2;
+        this.shading = false;
+        this.bloom = false;
+        this.sunrays = false;
+      }
+
+      // Initialize shaders and programs
+      const shaders = new Shaders(this.gl, this.ext);
+      this.blitInit();
+      this.ditheringTexture = Texture.ditheringTexture(this.gl);
+      this.programs = new Programs(this.gl, shaders);
+
+      this.displayMaterial = new Material(
+        shaders.baseVertexShader,
+        shaders.displayShaderSource,
+        this.gl,
+      );
+
+      // Initialize EmitterManager with this simulation instance
+      this._emitterManager = new EmitterManager(this);
+
+      // Bind event listeners
+      canvas.addEventListener('mousedown', this.handleMouseDown);
+      canvas.addEventListener('mousemove', this.handleMouseMove);
+      window.addEventListener('mouseup', this.handleMouseUp);
+
+      canvas.addEventListener('touchstart', this.handleTouchStart);
+      canvas.addEventListener('touchmove', this.handleTouchMove);
+      window.addEventListener('touchend', this.handleTouchEnd);
+
+      this.inverted = defaultConfig.inverted;
+      this.update = this.update.bind(this);
+
+      // Check for any WebGL errors after initialization
+      const error = gl.getError();
+      if (error !== gl.NO_ERROR) {
+        throw new Error(`WebGL error after initialization: ${error}`);
+      }
+
+    } catch (error) {
+      console.error('Failed to initialize simulation:', error);
+      throw error;
     }
-    this.canvas = canvas;
-    this.canvas.style.width = '100%';
-    this.canvas.style.height = '100%';
-
-    // Initialize WebGL context
-    const { gl, ext } = this.getWebGLContext();
-    this.gl = gl;
-    this.ext = ext;
-
-    // Initial resize
-    this.resize();
-
-    if (this.isMobile()) {
-      this.dyeResolution /= 2;
-    }
-    if (!this.ext.supportLinearFiltering) {
-      this.dyeResolution /= 2;
-      this.shading = false;
-      this.bloom = false;
-      this.sunrays = false;
-    }
-
-    const shaders = new Shaders(this.gl, this.ext);
-    this.blitInit();
-    this.ditheringTexture = Texture.ditheringTexture(this.gl);
-    this.programs = new Programs(this.gl, shaders);
-
-    this.displayMaterial = new Material(
-      shaders.baseVertexShader,
-      shaders.displayShaderSource,
-      this.gl,
-    );
-
-    // Initialize EmitterManager with this simulation instance
-    this._emitterManager = new EmitterManager(this);
-
-    // Bind event listeners
-    canvas.addEventListener('mousedown', this.handleMouseDown);
-    canvas.addEventListener('mousemove', this.handleMouseMove);
-    window.addEventListener('mouseup', this.handleMouseUp);
-
-    canvas.addEventListener('touchstart', this.handleTouchStart);
-    canvas.addEventListener('touchmove', this.handleTouchMove);
-    window.addEventListener('touchend', this.handleTouchEnd);
-
-    this.inverted = defaultConfig.inverted;
-    this.update = this.update.bind(this);
   }
 
   public start() {
-    if (this.hasStarted) {
-      console.log('Simulation already started');
-      return;
+    try {
+      if (this.hasStarted) {
+        console.log('Simulation already started');
+        return;
+      }
+
+      console.log('Starting simulation...');
+      
+      // Check if WebGL context is valid
+      if (!this.gl) {
+        throw new Error('WebGL context not initialized');
+      }
+
+      // Initialize pointers
+      this.pointers = [new Pointer(this.colorPalette, this.brightness)];
+
+      // Clear any existing WebGL errors
+      while (this.gl.getError() !== this.gl.NO_ERROR) {
+        // Clear error queue
+      }
+
+      // Initialize framebuffers
+      try {
+        this.updateKeywords();
+        this.initFramebuffers();
+      } catch (error) {
+        console.error('Failed to initialize framebuffers:', error);
+        throw new Error(`Failed to initialize framebuffers: ${error.message}`);
+      }
+
+      // Check for WebGL errors after framebuffer initialization
+      const error = this.gl.getError();
+      if (error !== this.gl.NO_ERROR) {
+        throw new Error(`WebGL error after framebuffer initialization: ${error}`);
+      }
+
+      // Ensure canvas is properly sized
+      this.resize();
+
+      // Start the animation loop
+      this.lastUpdateTime = Date.now();
+      this.update();
+
+      // Create some initial splats
+      setTimeout(() => {
+        try {
+          this.multipleSplats(parseInt((Math.random() * 20).toString()) + 5);
+        } catch (error) {
+          console.error('Error creating initial splats:', error);
+        }
+      }, 100);
+
+      this.hasStarted = true;
+      console.log('Simulation started successfully');
+    } catch (error) {
+      console.error('Failed to start simulation:', error);
+      this.handleError(error);
+      throw error;
+    }
+  }
+
+  private handleError(error: any) {
+    // Log the error
+    console.error('Simulation error:', error);
+
+    // Clean up resources
+    try {
+      this.cleanup();
+    } catch (cleanupError) {
+      console.error('Error during cleanup:', cleanupError);
     }
 
-    console.log('Starting simulation...');
-    this.pointers = [new Pointer(this.colorPalette, this.brightness)];
+    // Reset state
+    this.hasStarted = false;
+    this.paused = true;
 
-    this.updateKeywords();
-    this.initFramebuffers();
+    // Try to reinitialize if possible
+    try {
+      this.initializeWebGL();
+    } catch (reinitError) {
+      console.error('Failed to reinitialize WebGL:', reinitError);
+    }
+  }
 
-    // Ensure canvas is properly sized
-    this.resize();
+  private initializeWebGL() {
+    try {
+      // Get WebGL context with error checking
+      const { gl, ext } = this.getWebGLContext();
+      this.gl = gl;
+      this.ext = ext;
 
-    // Start the animation loop
-    this.update();
+      // Initialize managers
+      this.performanceMonitor = PerformanceMonitor.getInstance(this.gl);
+      this.resourceManager = ResourceManager.getInstance(this.gl);
+      this.webglState = WebGLState.getInstance(this.gl);
+      this.qualityManager = QualityManager.getInstance();
 
-    // Create some initial splats
-    setTimeout(() => {
-      this.multipleSplats(parseInt((Math.random() * 20).toString()) + 5);
-    }, 100);
+      // Initialize shaders
+      const shaders = new Shaders(this.gl, this.ext);
+      this.blitInit();
+      this.ditheringTexture = Texture.ditheringTexture(this.gl);
+      this.programs = new Programs(this.gl, shaders);
 
-    this.hasStarted = true;
-    console.log('Simulation started successfully');
+      // Check for WebGL errors after initialization
+      const error = this.gl.getError();
+      if (error !== this.gl.NO_ERROR) {
+        throw new Error(`WebGL error after initialization: ${error}`);
+      }
+
+      console.log('WebGL initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize WebGL:', error);
+      throw error;
+    }
+  }
+
+  private cleanup() {
+    // Cancel animation frame
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+    }
+
+    // Release resources
+    if (this.resourceManager) {
+      if (this._dye) {
+        this.resourceManager.releaseResource(this._dye.read.texture, 'texture');
+        this.resourceManager.releaseResource(this._dye.write.texture, 'texture');
+      }
+      if (this._velocity) {
+        this.resourceManager.releaseResource(this._velocity.read.texture, 'texture');
+        this.resourceManager.releaseResource(this._velocity.write.texture, 'texture');
+      }
+      // Release other resources...
+    }
+
+    // Remove event listeners
+    if (this.canvas) {
+      this.canvas.removeEventListener('mousedown', this.handleMouseDown);
+      this.canvas.removeEventListener('mousemove', this.handleMouseMove);
+      this.canvas.removeEventListener('touchstart', this.handleTouchStart);
+      this.canvas.removeEventListener('touchmove', this.handleTouchMove);
+    }
+    window.removeEventListener('mouseup', this.handleMouseUp);
+    window.removeEventListener('touchend', this.handleTouchEnd);
   }
 
   public stop() {
@@ -164,6 +315,13 @@ class Simulation {
     window.removeEventListener('touchend', this.handleTouchEnd);
 
     this.hasStarted = false;
+
+    // Cleanup resources
+    this.resourceManager.releaseResource(this._dye.read.texture, 'texture');
+    this.resourceManager.releaseResource(this._dye.write.texture, 'texture');
+    this.resourceManager.releaseResource(this._velocity.read.texture, 'texture');
+    this.resourceManager.releaseResource(this._velocity.write.texture, 'texture');
+    // ... release other resources ...
   }
 
   private handleMouseDown = (event: MouseEvent) => {
@@ -288,16 +446,28 @@ class Simulation {
     }
 
     const dpr = window.devicePixelRatio || 1;
-    const width = this.gl.canvas.clientWidth * dpr;
-    const height = this.gl.canvas.clientHeight * dpr;
+    const width = Math.floor(this.gl.canvas.clientWidth * dpr);
+    const height = Math.floor(this.gl.canvas.clientHeight * dpr);
 
     if (this.gl.canvas.width !== width || this.gl.canvas.height !== height) {
+      // Update canvas size
       this.gl.canvas.width = width;
       this.gl.canvas.height = height;
-      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
-    }
 
-    console.log('Simulation resized:', { width, height, dpr });
+      // Update viewport
+      this.gl.viewport(0, 0, width, height);
+
+      // Reinitialize framebuffers if they exist
+      if (this._dye && this._velocity) {
+        try {
+          this.initFramebuffers();
+        } catch (error) {
+          console.error('Error reinitializing framebuffers during resize:', error);
+        }
+      }
+
+      console.log('Simulation resized:', { width, height, dpr });
+    }
   }
 
   private supportRenderTextureFormat(
@@ -362,90 +532,99 @@ class Simulation {
   }
 
   private getWebGLContext(): { gl: WebGL2RenderingContext; ext: ExtraContext } {
-    const params = {
+    const params: WebGLContextAttributes = {
       alpha: true,
       depth: false,
       stencil: false,
       antialias: false,
       preserveDrawingBuffer: false,
+      powerPreference: 'high-performance',
+      failIfMajorPerformanceCaveat: false,
     };
 
-    let gl = this.canvas.getContext('webgl2', params) as WebGL2RenderingContext;
-    const isWebGL2 = !!gl;
-    if (!isWebGL2)
-      gl =
-        (this.canvas.getContext('webgl', params) as WebGL2RenderingContext) ??
-        (this.canvas.getContext(
-          'experimental-webgl',
-          params,
-        ) as WebGLRenderingContext);
-
-    let halfFloat;
-    let supportLinearFiltering;
-    if (isWebGL2) {
-      gl.getExtension('EXT_color_buffer_float');
-      supportLinearFiltering = gl.getExtension('OES_texture_float_linear')!;
-    } else {
-      halfFloat = gl.getExtension('OES_texture_half_float');
-      supportLinearFiltering = gl.getExtension(
-        'OES_texture_half_float_linear',
-      )!;
+    // Try WebGL 2 first
+    let gl = this.canvas.getContext('webgl2', params);
+    if (!gl) {
+      // Fall back to WebGL 1
+      gl = this.canvas.getContext('webgl', params) ||
+           this.canvas.getContext('experimental-webgl', params);
+      
+      if (!gl) {
+        throw new Error('WebGL not supported');
+      }
     }
 
+    // Clear any existing errors
+    while (gl.getError() !== gl.NO_ERROR) {
+      // Clear error queue
+    }
+
+    // Check for required extensions
+    let halfFloat;
+    let supportLinearFiltering;
+    const isWebGL2 = gl instanceof WebGL2RenderingContext;
+
+    if (isWebGL2) {
+      gl.getExtension('EXT_color_buffer_float');
+      gl.getExtension('OES_texture_float');
+      supportLinearFiltering = gl.getExtension('OES_texture_float_linear');
+    } else {
+      halfFloat = gl.getExtension('OES_texture_half_float');
+      supportLinearFiltering = gl.getExtension('OES_texture_half_float_linear');
+    }
+
+    // Clear with transparent black
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
 
-    const halfFloatTexType = isWebGL2
-      ? gl.HALF_FLOAT
-      : halfFloat
-        ? halfFloat.HALF_FLOAT_OES
-        : 0;
+    // Get texture formats
+    let halfFloatTexType;
     let formatRGBA;
     let formatRG;
     let formatR;
 
     if (isWebGL2) {
-      formatRGBA = this.getSupportedFormat(
-        gl,
-        gl.RGBA16F,
-        gl.RGBA,
-        halfFloatTexType,
-      )!;
-      formatRG = this.getSupportedFormat(
-        gl,
-        gl.RG16F,
-        gl.RG,
-        halfFloatTexType,
-      )!;
-      formatR = this.getSupportedFormat(gl, gl.R16F, gl.RED, halfFloatTexType)!;
+      halfFloatTexType = gl.HALF_FLOAT;
+      formatRGBA = { internalFormat: gl.RGBA16F, format: gl.RGBA };
+      formatRG = { internalFormat: gl.RG16F, format: gl.RG };
+      formatR = { internalFormat: gl.R16F, format: gl.RED };
+
+      // Test if floating point textures are supported
+      const testTexture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, testTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1, 1, 0, gl.RGBA, halfFloatTexType, null);
+      
+      const error = gl.getError();
+      if (error !== gl.NO_ERROR) {
+        console.warn('Floating point textures not supported, falling back to 8-bit textures');
+        halfFloatTexType = gl.UNSIGNED_BYTE;
+        formatRGBA = { internalFormat: gl.RGBA8, format: gl.RGBA };
+        formatRG = { internalFormat: gl.RGBA8, format: gl.RGBA };
+        formatR = { internalFormat: gl.RGBA8, format: gl.RGBA };
+      }
+
+      gl.deleteTexture(testTexture);
     } else {
-      formatRGBA = this.getSupportedFormat(
-        gl,
-        gl.RGBA,
-        gl.RGBA,
-        halfFloatTexType,
-      )!;
-      formatRG = this.getSupportedFormat(
-        gl,
-        gl.RGBA,
-        gl.RGBA,
-        halfFloatTexType,
-      )!;
-      formatR = this.getSupportedFormat(
-        gl,
-        gl.RGBA,
-        gl.RGBA,
-        halfFloatTexType,
-      )!;
+      halfFloatTexType = halfFloat ? halfFloat.HALF_FLOAT_OES : gl.UNSIGNED_BYTE;
+      formatRGBA = { internalFormat: gl.RGBA, format: gl.RGBA };
+      formatRG = { internalFormat: gl.RGBA, format: gl.RGBA };
+      formatR = { internalFormat: gl.RGBA, format: gl.RGBA };
     }
 
+    // Enable required WebGL features
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
     return {
-      gl,
+      gl: gl as WebGL2RenderingContext,
       ext: {
         formatRGBA,
         formatRG,
         formatR,
         halfFloatTexType,
-        supportLinearFiltering,
+        supportLinearFiltering: !!supportLinearFiltering,
       },
     };
   }
@@ -470,76 +649,103 @@ class Simulation {
     const rgba = this.ext.formatRGBA;
     const rg = this.ext.formatRG;
     const r = this.ext.formatR;
-    const filtering = this.ext.supportLinearFiltering
-      ? this.gl.LINEAR
-      : this.gl.NEAREST;
+    
+    // Ensure we're using valid formats
+    const isWebGL2 = this.gl instanceof WebGL2RenderingContext;
+    const filtering = this.ext.supportLinearFiltering ? this.gl.LINEAR : this.gl.NEAREST;
+
+    // Adjust formats for WebGL 1
+    if (!isWebGL2) {
+      rgba.internalFormat = this.gl.RGBA;
+      rg.internalFormat = this.gl.RGBA;
+      r.internalFormat = this.gl.RGBA;
+      rgba.format = this.gl.RGBA;
+      rg.format = this.gl.RGBA;
+      r.format = this.gl.RGBA;
+    }
 
     this.gl.disable(this.gl.BLEND);
 
-    if (!this._dye)
-      this._dye = this.createDoubleFBO(
-        dyeRes.width,
-        dyeRes.height,
-        rgba.internalFormat,
-        rgba.format,
-        texType,
-        filtering,
-      );
-    else
-      this._dye = this.resizeDoubleFBO(
-        this._dye,
-        dyeRes.width,
-        dyeRes.height,
-        rgba.internalFormat,
-        rgba.format,
-        texType,
-        filtering,
-      );
+    try {
+      if (!this._dye) {
+        this._dye = this.createDoubleFBO(
+          dyeRes.width,
+          dyeRes.height,
+          rgba.internalFormat,
+          rgba.format,
+          texType,
+          filtering,
+        );
+      } else {
+        this._dye = this.resizeDoubleFBO(
+          this._dye,
+          dyeRes.width,
+          dyeRes.height,
+          rgba.internalFormat,
+          rgba.format,
+          texType,
+          filtering,
+        );
+      }
 
-    if (!this._velocity)
-      this._velocity = this.createDoubleFBO(
+      if (!this._velocity) {
+        this._velocity = this.createDoubleFBO(
+          simRes.width,
+          simRes.height,
+          rg.internalFormat,
+          rg.format,
+          texType,
+          filtering,
+        );
+      } else {
+        this._velocity = this.resizeDoubleFBO(
+          this._velocity,
+          simRes.width,
+          simRes.height,
+          rg.internalFormat,
+          rg.format,
+          texType,
+          filtering,
+        );
+      }
+
+      this._divergence = this.createFBO(
         simRes.width,
         simRes.height,
-        rg.internalFormat,
-        rg.format,
+        r.internalFormat,
+        r.format,
         texType,
-        filtering,
-      );
-    else
-      this._velocity = this.resizeDoubleFBO(
-        this._velocity,
-        simRes.width,
-        simRes.height,
-        rg.internalFormat,
-        rg.format,
-        texType,
-        filtering,
+        this.gl.NEAREST,
       );
 
-    this._divergence = this.createFBO(
-      simRes.width,
-      simRes.height,
-      r.internalFormat,
-      r.format,
-      texType,
-      this.gl.NEAREST,
-    );
-    this._curl = this.createFBO(
-      simRes.width,
-      simRes.height,
-      r.internalFormat,
-      r.format,
-      texType,
-      this.gl.NEAREST,
-    );
-    this._pressure = this.createDoubleFBO(
-      simRes.width,
-      simRes.height,
-      r.internalFormat,
-      r.format,
-      texType,
-      this.gl.NEAREST,
-    );
+      this._curl = this.createFBO(
+        simRes.width,
+        simRes.height,
+        r.internalFormat,
+        r.format,
+        texType,
+        this.gl.NEAREST,
+      );
+
+      this._pressure = this.createDoubleFBO(
+        simRes.width,
+        simRes.height,
+        r.internalFormat,
+        r.format,
+        texType,
+        this.gl.NEAREST,
+      );
+
+      // Check framebuffer status
+      const status = this.gl.checkFramebufferStatus(this.gl.FRAMEBUFFER);
+      if (status !== this.gl.FRAMEBUFFER_COMPLETE) {
+        throw new Error(`Framebuffer is incomplete: ${status}`);
+      }
+
+    } catch (error) {
+      console.error('Error initializing framebuffers:', error);
+      throw error;
+    }
 
     this.initBloomFramebuffers();
     this.initSunraysFramebuffers();
@@ -554,12 +760,31 @@ class Simulation {
       aspectRatio = 1.0 / aspectRatio;
     }
 
-    const min = Math.round(resolution);
-    const max = Math.round(resolution * aspectRatio);
+    // Ensure minimum resolution
+    const minResolution = 64;
+    const baseResolution = Math.max(resolution, minResolution);
 
-    if (this.gl.drawingBufferWidth > this.gl.drawingBufferHeight)
-      return { width: max, height: min };
-    else return { width: min, height: max };
+    // Calculate dimensions
+    let width: number;
+    let height: number;
+
+    if (this.gl.drawingBufferWidth > this.gl.drawingBufferHeight) {
+      width = Math.round(baseResolution * aspectRatio);
+      height = Math.round(baseResolution);
+    } else {
+      width = Math.round(baseResolution);
+      height = Math.round(baseResolution * aspectRatio);
+    }
+
+    // Ensure dimensions are non-zero and power of 2
+    width = Math.max(this.nextPowerOfTwo(width), minResolution);
+    height = Math.max(this.nextPowerOfTwo(height), minResolution);
+
+    return { width, height };
+  }
+
+  private nextPowerOfTwo(n: number): number {
+    return Math.pow(2, Math.ceil(Math.log2(n)));
   }
 
   private createDoubleFBO(
@@ -652,70 +877,96 @@ class Simulation {
     type: number,
     param: number,
   ): FBO {
-    this.gl.activeTexture(this.gl.TEXTURE0);
-    const texture = this.gl.createTexture();
-    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
-    this.gl.texParameteri(
-      this.gl.TEXTURE_2D,
-      this.gl.TEXTURE_MIN_FILTER,
-      param,
-    );
-    this.gl.texParameteri(
-      this.gl.TEXTURE_2D,
-      this.gl.TEXTURE_MAG_FILTER,
-      param,
-    );
-    this.gl.texParameteri(
-      this.gl.TEXTURE_2D,
-      this.gl.TEXTURE_WRAP_S,
-      this.gl.CLAMP_TO_EDGE,
-    );
-    this.gl.texParameteri(
-      this.gl.TEXTURE_2D,
-      this.gl.TEXTURE_WRAP_T,
-      this.gl.CLAMP_TO_EDGE,
-    );
-    this.gl.texImage2D(
-      this.gl.TEXTURE_2D,
-      0,
-      internalFormat,
-      w,
-      h,
-      0,
-      format,
-      type,
-      null,
-    );
-
-    const fbo: WebGLFramebuffer | null = this.gl.createFramebuffer();
-    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fbo);
-    this.gl.framebufferTexture2D(
-      this.gl.FRAMEBUFFER,
-      this.gl.COLOR_ATTACHMENT0,
-      this.gl.TEXTURE_2D,
-      texture,
-      0,
-    );
-    this.gl.viewport(0, 0, w, h);
-    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
-
-    const texelSizeX = 1.0 / w;
-    const texelSizeY = 1.0 / h;
-
     const gl = this.gl;
-    return {
-      texture,
-      fbo,
-      width: w,
-      height: h,
-      texelSizeX,
-      texelSizeY,
-      attach(id) {
-        gl.activeTexture(gl.TEXTURE0 + id);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        return id;
-      },
-    };
+
+    // Validate dimensions
+    if (w <= 0 || h <= 0) {
+      throw new Error(`Invalid texture dimensions: ${w}x${h}`);
+    }
+
+    try {
+      // Create and bind texture
+      const texture = gl.createTexture();
+      if (!texture) {
+        throw new Error('Failed to create texture');
+      }
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+
+      // Set texture parameters
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, param);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, param);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      // Create texture with null data
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        internalFormat,
+        w,
+        h,
+        0,
+        format,
+        type,
+        null
+      );
+
+      // Check for texture creation errors
+      const texError = gl.getError();
+      if (texError !== gl.NO_ERROR) {
+        throw new Error(`Failed to create texture: WebGL error ${texError}`);
+      }
+
+      // Create and bind framebuffer
+      const fbo = gl.createFramebuffer();
+      if (!fbo) {
+        gl.deleteTexture(texture);
+        throw new Error('Failed to create framebuffer');
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D,
+        texture,
+        0
+      );
+
+      // Check framebuffer status
+      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      if (status !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.deleteTexture(texture);
+        gl.deleteFramebuffer(fbo);
+        throw new Error(`Framebuffer is incomplete: ${status}`);
+      }
+
+      // Clear the framebuffer
+      gl.viewport(0, 0, w, h);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      const texelSizeX = 1.0 / w;
+      const texelSizeY = 1.0 / h;
+
+      return {
+        texture,
+        fbo,
+        width: w,
+        height: h,
+        texelSizeX,
+        texelSizeY,
+        attach(id: number) {
+          gl.activeTexture(gl.TEXTURE0 + id);
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          return id;
+        },
+      };
+    } catch (error) {
+      console.error('Error creating FBO:', error);
+      throw error;
+    }
   }
 
   private initBloomFramebuffers() {
@@ -801,12 +1052,7 @@ class Simulation {
 
   private blit(target: FBO | null, clear = false) {
     if (target === null) {
-      this.gl.viewport(
-        0,
-        0,
-        this.gl.drawingBufferWidth,
-        this.gl.drawingBufferHeight,
-      );
+      this.gl.viewport(0, 0, this.gl.drawingBufferWidth, this.gl.drawingBufferHeight);
       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     } else {
       this.gl.viewport(0, 0, target.width, target.height);
@@ -879,22 +1125,42 @@ class Simulation {
     return radius;
   }
 
-  private update() {
+  private update = () => {
+    if (!this.performanceMonitor) {
+      console.warn('Performance monitor not initialized');
+      return;
+    }
+
+    this.performanceMonitor.startFrame();
+
     const dt = this.calcDeltaTime();
     if (dt > 0 && !this.paused) {
-      this.applyInputs();
-      
-      // Process emitters before step
-      this._emitterManager.processEmitters((x, y, dx, dy, color) => {
-        this.splat(x, y, dx, dy, color);
-      });
-      
-      this.step(dt);
       this.updateColors(dt);
+      this.applyInputs();
+      this.step(dt);
     }
-    
+
     this.render(null);
-    requestAnimationFrame(this.update);
+    
+    // Update quality based on performance
+    this.performanceMonitor.endFrame();
+    const metrics = this.performanceMonitor.getMetrics();
+    
+    if (this.qualityManager) {
+      this.qualityManager.updateMetrics(metrics);
+      
+      // Apply quality adjustments if needed
+      const currentPreset = this.qualityManager.getCurrentPreset();
+      this.simResolution = currentPreset.simResolution;
+      this.dyeResolution = currentPreset.dyeResolution;
+      this.bloomResolution = currentPreset.bloomResolution;
+      this.bloomIterations = currentPreset.bloomIterations;
+      this.sunrays = currentPreset.sunrays;
+      this.sunraysResolution = currentPreset.sunraysResolution;
+      this.shading = currentPreset.shading;
+    }
+
+    this.animationFrameId = requestAnimationFrame(this.update);
   }
 
   private calcDeltaTime(): number {
@@ -1089,6 +1355,14 @@ class Simulation {
   }
 
   private render(target: FBO | null) {
+    if (target == null) {
+      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    } else {
+      this.gl.viewport(0, 0, target.width, target.height);
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, target.fbo);
+    }
+
     if (this.bloom) this.applyBloom(this._dye.read, this._bloom);
     if (this.sunrays) {
       this.applySunrays(this._dye.read, this._dye.write, this._sunrays);
@@ -1103,10 +1377,7 @@ class Simulation {
     }
 
     if (!this.transparent)
-      this.drawColor(
-        target,
-        Color.normalizeColor(Color.HEXtoRGB(this.backgroundColor)),
-      );
+      this.drawColor(target, Color.normalizeColor(Color.HEXtoRGB(this.backgroundColor)));
     this.drawDisplay(target);
   }
 
@@ -1357,12 +1628,41 @@ class Simulation {
     return this._emitterManager.emitters;
   }
 
-  public setAudioConfig(config: any): void {
+  public setAudioConfig(config: AudioConfig): void {
     if (!this._emitterManager) {
       console.error('EmitterManager not initialized');
       return;
     }
-    this._emitterManager.setAudioConfig(config);
+
+    try {
+      // Check if browser supports getUserMedia
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Browser does not support audio input. Using fallback mode.');
+      }
+
+      // Add error handling and fallback mode to the config
+      const audioConfig: AudioConfig = {
+        ...config,
+        fallbackMode: true,
+        onError: (error: Error) => {
+          console.warn('Audio input error:', error);
+          if (config.onError) {
+            config.onError(error);
+          }
+          // Switch to fallback mode if available
+          if (config.fallbackMode) {
+            console.log('Switching to fallback mode');
+            this._emitterManager.setFallbackAudioMode(true);
+          }
+        }
+      };
+
+      this._emitterManager.setAudioConfig(audioConfig);
+    } catch (error) {
+      console.warn('Audio initialization failed:', error);
+      // Enable fallback mode
+      this._emitterManager.setFallbackAudioMode(true);
+    }
   }
 }
 

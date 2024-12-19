@@ -15,6 +15,11 @@ export class EmitterManager {
     };
     private _lastUpdate: number = 0;
     private _updateInterval: number = 1000 / 60; // 60fps
+    private _audioContext: AudioContext | null = null;
+    private _audioAnalyser: AnalyserNode | null = null;
+    private _audioData: Uint8Array | null = null;
+    private _fallbackMode: boolean = false;
+    private _fallbackData: number[] = [];
 
     constructor(simulation: Simulation) {
         this._simulation = simulation;
@@ -188,5 +193,55 @@ export class EmitterManager {
         if (emitter && emitter.type === 'mouse') {
             emitter.active = false;
         }
+    }
+
+    public setFallbackAudioMode(enabled: boolean): void {
+        this._fallbackMode = enabled;
+        if (enabled) {
+            // Initialize fallback audio simulation
+            this.initializeFallbackAudio();
+        }
+    }
+
+    private initializeFallbackAudio(): void {
+        // Create simulated frequency data
+        const frequencyCount = 32;
+        this._fallbackData = new Array(frequencyCount).fill(0);
+        this._lastUpdate = Date.now();
+    }
+
+    private updateFallbackAudio(): void {
+        const now = Date.now();
+        if (now - this._lastUpdate < this._updateInterval) return;
+
+        // Generate smooth, oscillating values for different frequency ranges
+        const time = now / 1000;
+        for (let i = 0; i < this._fallbackData.length; i++) {
+            // Create different frequencies for different ranges
+            const baseFreq = i / this._fallbackData.length;
+            const value = 
+                Math.sin(time * (1 + baseFreq) * 2) * 0.3 + // Base oscillation
+                Math.sin(time * (2 + baseFreq) * 3) * 0.2 + // Higher frequency
+                Math.sin(time * (0.5 + baseFreq)) * 0.2;    // Lower frequency
+            
+            // Normalize to 0-255 range (similar to real audio data)
+            this._fallbackData[i] = Math.floor(((value + 1) / 2) * 255);
+        }
+
+        this._lastUpdate = now;
+    }
+
+    public getAudioData(): Uint8Array | number[] | null {
+        if (this._fallbackMode) {
+            this.updateFallbackAudio();
+            return this._fallbackData;
+        }
+
+        if (this._audioAnalyser && this._audioData) {
+            this._audioAnalyser.getByteFrequencyData(this._audioData);
+            return this._audioData;
+        }
+
+        return null;
     }
 }
