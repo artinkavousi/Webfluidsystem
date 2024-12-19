@@ -7,11 +7,13 @@ export class EmitterManager {
     private _audioConfig: any = {
         affectsForce: true,
         affectsRadius: true,
-        minForce: 0,
-        maxForce: 500,
-        minRadius: 0.01,
-        maxRadius: 1.0,
-        intensity: 2.0
+        minForce: 4000,
+        maxForce: 18000,
+        minRadius: 0.04,
+        maxRadius: 0.25,
+        intensity: 2.2,
+        smoothing: 0.55,
+        velocityScale: 0.3
     };
     private _lastUpdate: number = 0;
     private _updateInterval: number = 1000 / 60; // 60fps
@@ -20,6 +22,7 @@ export class EmitterManager {
     private _audioData: Uint8Array | null = null;
     private _fallbackMode: boolean = false;
     private _fallbackData: number[] = [];
+    private _lastAudioAmplitude: number = 0;
 
     constructor(simulation: Simulation) {
         this._simulation = simulation;
@@ -54,37 +57,82 @@ export class EmitterManager {
     private processEmitterEffect(emitter: any): void {
         // Get audio data if available
         const audioData = this._audioManager.getAudioData();
-        let finalForce = emitter.force || 1000;
-        let finalRadius = emitter.radius || 1;
+        let finalForce = emitter.force || 8000;
+        let finalRadius = emitter.radius || 0.08;
 
         // Apply audio effects if available
         if (audioData) {
+            const currentAmplitude = Math.min(Math.max(audioData.amplitude, 0), 1);
+            const smoothedAmplitude = this._lastAudioAmplitude * this._audioConfig.smoothing + 
+                                    currentAmplitude * (1 - this._audioConfig.smoothing);
+            this._lastAudioAmplitude = smoothedAmplitude;
+
             if (this._audioConfig.affectsForce) {
+                // More dynamic force scaling with steeper power curve
                 const forceRange = this._audioConfig.maxForce - this._audioConfig.minForce;
-                const normalizedAmplitude = Math.min(Math.max(audioData.amplitude, 0), 1);
-                finalForce += forceRange * normalizedAmplitude;
+                finalForce = this._audioConfig.minForce + 
+                    (forceRange * Math.pow(smoothedAmplitude, 1.2) * this._audioConfig.intensity);
             }
 
             if (this._audioConfig.affectsRadius) {
+                // More sensitive radius scaling
                 const radiusRange = this._audioConfig.maxRadius - this._audioConfig.minRadius;
-                const normalizedAmplitude = Math.min(Math.max(audioData.amplitude, 0), 1);
-                finalRadius += radiusRange * normalizedAmplitude;
+                finalRadius = this._audioConfig.minRadius + 
+                    (radiusRange * Math.pow(smoothedAmplitude, 0.6));
             }
         }
 
-        // Apply the effect
+        // Apply the effect with enhanced dynamics
         if (emitter.active) {
             const dx = emitter.direction[0] * finalForce;
             const dy = emitter.direction[1] * finalForce;
+            
+            // Enhanced velocity-based color with more sensitivity
+            const velocity = Math.sqrt(dx * dx + dy * dy);
+            const normalizedVelocity = Math.min(velocity / (this._audioConfig.maxForce * 0.7), 1);
+            const color = this.getDynamicColor(normalizedVelocity, emitter.baseColor);
             
             this._simulation.splat(
                 emitter.position[0],
                 emitter.position[1],
                 dx,
                 dy,
-                { r: 0.5, g: 0.5, b: 1.0 }
+                color
             );
         }
+    }
+
+    private getDynamicColor(intensity: number, baseColor?: number[]): { r: number, g: number, b: number } {
+        if (baseColor) {
+            // Enhanced color intensity scaling
+            const powerCurve = Math.pow(intensity, 0.7); // Softer power curve for more color variation
+            return {
+                r: 0.3 + powerCurve * 0.7,
+                g: 0.1 + powerCurve * 0.6,
+                b: 0.7 + powerCurve * 0.3
+            };
+        }
+
+        // Enhanced default dynamic color
+        return {
+            r: 0.2 + intensity * 0.8,
+            g: 0.1 + intensity * 0.6,
+            b: 0.6 + intensity * 0.4
+        };
+    }
+
+    private getEmitterColor(intensity: number, baseColor: number[]): { r: number, g: number, b: number } {
+        // Ensure base color values are within valid range
+        const r = Math.min(255, Math.max(0, baseColor[0]));
+        const g = Math.min(255, Math.max(0, baseColor[1]));
+        const b = Math.min(255, Math.max(0, baseColor[2]));
+
+        // Apply intensity with better color preservation
+        return {
+            r: (r / 255) * (0.3 + intensity * 0.7),
+            g: (g / 255) * (0.3 + intensity * 0.7),
+            b: (b / 255) * (0.3 + intensity * 0.7)
+        };
     }
 
     public setAudioConfig(config: any): void {
@@ -141,34 +189,36 @@ export class EmitterManager {
             if (emitter.active) {
                 const position = emitter.position || [0, 0];
                 const direction = emitter.direction || [0, 0];
-                const force = emitter.force || 1000;
-                const color = emitter.color || [30, 0, 300];
-
-                // Scale force but keep it gentle
+                const force = emitter.force || 6000;
+                
                 const dx = direction[0] * force;
                 const dy = direction[1] * force;
                 
-                // Convert array color to object format
-                const colorObj = {
-                    r: Math.min(255, Math.max(0, color[0])) / 255,
-                    g: Math.min(255, Math.max(0, color[1])) / 255,
-                    b: Math.min(255, Math.max(0, color[2])) / 255
-                };
+                // Dynamic color based on velocity
+                const velocity = Math.sqrt(dx * dx + dy * dy);
+                const normalizedVelocity = Math.min(velocity / 8000, 1);
+                const colorObj = this.getDynamicColor(normalizedVelocity, emitter.baseColor);
 
                 splatCallback(position[0], position[1], dx, dy, colorObj);
             }
         });
     }
 
-    public addMouseEmitter(x: number, y: number, force: number = 1000, radius: number = 1): number {
+    public addMouseEmitter(x: number, y: number, force: number = 8000, radius: number = 0.08): number {
         const emitterConfig = {
             active: true,
             position: [x, y],
             direction: [0, 0],
-            force: force * 0.1,
+            force: force,
             radius: radius,
             type: 'mouse',
-            color: [30, 0, 300]
+            baseColor: [0.3, 0.1, 0.7],
+            velocityFactor: this._audioConfig.velocityScale,
+            minForce: force * 0.35,
+            maxForce: force * 0.95,
+            radiusRange: [0.04, 0.25],
+            forceCurve: 1.2,
+            radiusCurve: 0.6
         };
         return this.addEmitter(emitterConfig);
     }
@@ -177,12 +227,37 @@ export class EmitterManager {
         const emitter = this._emitters[index];
         if (emitter && emitter.type === 'mouse') {
             const length = Math.sqrt(dx * dx + dy * dy);
-            const scale = 0.1;
+            const velocityFactor = emitter.velocityFactor || this._audioConfig.velocityScale;
+            
+            // Enhanced velocity-based force calculation
+            const normalizedLength = Math.min(length / 25, 1);
+            const forceCurve = Math.pow(normalizedLength, emitter.forceCurve || 1.2);
+            const dynamicForce = emitter.minForce + 
+                (emitter.maxForce - emitter.minForce) * forceCurve;
+            
+            // Enhanced radius calculation with smaller range
+            const radiusRange = emitter.radiusRange || [0.04, 0.25];
+            const radiusCurve = Math.pow(normalizedLength, emitter.radiusCurve || 0.6);
+            const dynamicRadius = radiusRange[0] + 
+                (radiusRange[1] - radiusRange[0]) * radiusCurve;
+            
             emitter.position = [x, y];
             if (length > 0) {
-                emitter.direction = [dx / length * scale, dy / length * scale];
+                // Enhanced direction calculation with more immediate response
+                const dirX = dx / length * velocityFactor;
+                const dirY = dy / length * velocityFactor;
+                
+                // More immediate direction changes
+                emitter.direction = [
+                    dirX * 0.95 + (emitter.direction[0] || 0) * 0.05,
+                    dirY * 0.95 + (emitter.direction[1] || 0) * 0.05
+                ];
+                emitter.force = dynamicForce;
+                emitter.radius = dynamicRadius;
             } else {
                 emitter.direction = [0, 0];
+                emitter.force = emitter.minForce;
+                emitter.radius = radiusRange[0];
             }
             emitter.active = true;
         }

@@ -9,8 +9,8 @@ export class PointEmitter extends BaseEmitter {
 
     constructor(
         position: Vector2,
-        size: number = 1.0,
-        emissionRate: number = 1.0,
+        size: number = 0.2,
+        emissionRate: number = 0.2,
         direction: Vector2 = { x: 0, y: 1 },
         color: [number, number, number] = [1, 1, 1],
         strength: number = 1.0
